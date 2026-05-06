@@ -25,9 +25,6 @@ class System(BaseModel):
             cell=atoms.get_cell().cellpar(),
         )
 
-    # def to_atoms(self) -> Atoms:
-    #     pass
-
 
 async def printout(ctx: RunContext[System], events: AsyncIterable):
     async for event in events:
@@ -91,24 +88,20 @@ class AgentMD(MolecularDynamics):
 
     def step(self, forces=None):
         atoms = self.atoms
-        natoms = len(atoms)
-
-        s: list[str] = atoms.get_chemical_symbols()
-        v: np.ndarray = atoms.get_velocities()
+        # s: list[str] = atoms.get_chemical_symbols()
+        # v: np.ndarray = atoms.get_velocities()
         x: np.ndarray = atoms.get_positions()
-        c: Cell = atoms.get_cell()
-
-        step_deps = System(
-            symbols=s,
-            positions=x.tolist(),
-            velocities=v.tolist(),
-            cell=c.cellpar(),
-        )
-
+        # c: Cell = atoms.get_cell()
+        # step_deps = System(
+        #     symbols=s,
+        #     positions=x.tolist(),
+        #     velocities=v.tolist(),
+        #     cell=c.cellpar(),
+        # )
+        step_deps = System.from_atoms(atoms)
         result = self.agent.run_sync(
             user_prompt=(
                 f"Integrate the simulation forward in time by {self.dt} fs by updating the atomic positions. ",
-                # "You are provided a few tools for getting and setting properties of the system. ",
                 "When you are finished and ready for the next step, output 'Step complete'.",
             ),
             deps=step_deps,
