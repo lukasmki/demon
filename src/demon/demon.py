@@ -1,10 +1,10 @@
 import numpy as np
 from ase.cell import Cell
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 from pydantic_ai import Agent, RunContext, PartEndEvent
 from typing import IO, Annotated, AsyncIterable, Literal
 from ase.md.md import MolecularDynamics
-from ase import Atoms
+from ase import Atoms, units
 
 
 class System(BaseModel):
@@ -20,22 +20,53 @@ class System(BaseModel):
     door: Annotated[
         Literal["open", "closed"], "State of the door between the two systems"
     ]
+    temp_above: Annotated[float, "Temperature (K) of particles above z=L/2"]
+    temp_below: Annotated[float, "Temperature (K) of particles below z=L/2"]
+
+    # hidden
+    _atoms: Atoms = PrivateAttr()
 
     @classmethod
     def from_atoms(cls, atoms: Atoms) -> "System":
+        cell = atoms.get_cell()
         pos = atoms.get_positions()
         mom = atoms.get_momenta()
         vel = atoms.get_velocities()
-        # ekin = 0.5 * np.vdot(mom, vel)
-        # 2 * ekin / (3 * N * units.kB)
+        above = pos[:, 2] > 0.5 * cell[2, 2]
+        below = pos[:, 2] < 0.5 * cell[2, 2]
+        T_a = np.vdot(mom[above], vel[above]) / (3 * np.sum(above) * units.kB + 1e-8)
+        T_b = np.vdot(mom[below], vel[below]) / (3 * np.sum(below) * units.kB + 1e-8)
 
-        return cls(
+        inst = cls(
             symbols=atoms.get_chemical_symbols(),
             positions=atoms.get_positions().tolist(),
             velocities=atoms.get_velocities().tolist(),
             cell=atoms.get_cell().cellpar(),
-            door=atoms.info.get("door", "closed"),
+            temp_above=float(T_a),
+            temp_below=float(T_b),
+            door=atoms.info.get("door", "open"),
         )
+        inst._atoms = atoms
+        return inst
+
+    def update_from_atoms(self, atoms: Atoms) -> None:
+        cell = atoms.get_cell()
+        pos = atoms.get_positions()
+        mom = atoms.get_momenta()
+        vel = atoms.get_velocities()
+        above = pos[:, 2] > 0.5 * cell[2, 2]
+        below = pos[:, 2] < 0.5 * cell[2, 2]
+        T_a = np.vdot(mom[above], vel[above]) / (3 * np.sum(above) * units.kB + 1e-8)
+        T_b = np.vdot(mom[below], vel[below]) / (3 * np.sum(below) * units.kB + 1e-8)
+
+        self.symbols = atoms.get_chemical_symbols()
+        self.positions = pos.tolist()
+        self.velocities = vel.tolist()
+        self.cell = cell.cellpar()
+        self.temp_above = float(T_a)
+        self.temp_below = float(T_b)
+        self.door = atoms.info.get("door", "open")
+        self._atoms = atoms
 
 
 async def printout(ctx: RunContext[System], events: AsyncIterable):
@@ -51,6 +82,7 @@ class DemonMD(MolecularDynamics):
         model,
         atoms: Atoms,
         timestep: int | float,
+        demon_enabled: bool = False,
         trajectory: str | None = None,
         logfile: IO | str | None = None,
         loginterval: int = 1,
@@ -60,10 +92,21 @@ class DemonMD(MolecularDynamics):
         self.agent = Agent(
             model=model,
             deps_type=System,
+            instructions=(
+                "You are given a box of particles that collide elastically against the walls of a box with side lengths, L. ",
+                "You control a door that divides the top and bottom halves of the box along the z=L/2 plane. ",
+                "Your goal is to maximize the temperature difference between the halves by controlling the flow of particles between the two subsystems. ",
+                "You must decide whether to leave the door in its current state or change the state of the door. ",
+                # "Your final result should be the number of time steps (>= 1) to advance the simulation before you make your next decision to open or close the door. ",
+                # "When you are finished making the decision, call the `final_result` tool with the number of steps to wait.",
+                "If you are satisfied with the acheieved temperature difference, return your use the `final_result` tool with a value of 42.",
+            ),
         )
         self.register_tools(self.agent)
         self.messages = []
+        self.messages_json: bytes = bytes()
         self.timer = 0
+        self.demon_enabled: bool = demon_enabled
 
     def register_tools(self, agent: Agent[System, str]) -> None:
         @agent.tool
@@ -84,6 +127,18 @@ class DemonMD(MolecularDynamics):
             ctx.deps.door = state
             return f"The door is {state}."
 
+        @agent.tool
+        def wait(ctx: RunContext[System], steps: int) -> str:
+            "Advance the simulation by number of time steps"
+            for _ in range(steps):
+                self.verlet_step(ctx.deps._atoms)
+                self.physics_step(ctx.deps._atoms, door=ctx.deps.door)
+                self.nsteps += 1
+                self.call_observers()
+                # print("STEP", ctx.deps._atoms.positions)
+            ctx.deps.update_from_atoms(ctx.deps._atoms)
+            return f"Simulation advanced by {steps}."
+
     def verlet_step(self, atoms, forces=None):
         # VelocityVerlet.step()
         if forces is None:
@@ -100,39 +155,12 @@ class DemonMD(MolecularDynamics):
         atoms.set_momenta(atoms.get_momenta() + 0.5 * self.dt * forces)
         return forces
 
-    def step(self, forces=None):
-        print("STEP:", self.nsteps)
-        atoms = self.atoms
-        step_deps = System.from_atoms(atoms)
-
-        self.timer -= 1
-        while self.timer <= 0:
-            result = self.agent.run_sync(
-                user_prompt=(
-                    f"STEP: {self.nsteps}\n\n",
-                    "You control a door that divides the system along the xy-plane. ",
-                    "Your goal is to create a hot and a cold subsystem above and below the xy-plane by controlling which particles are allowed to cross when the door is open and closed. ",
-                    "You must decide whether to leave the door in its current state or change the state of the door. ",
-                    "Your final result should be the number of time steps (>= 1) to advance the simulation before you make your next decision to open or close. ",
-                    "When you are finished, call the `final_result` tool with the number of steps to wait.",
-                ),
-                deps=step_deps,
-                output_type=int,
-                event_stream_handler=printout,
-                message_history=self.messages,
-            )
-            print(result.output)
-            self.messages = result.all_messages()
-            self.timer = result.output
-
-        atoms.info.update({"door": step_deps.door})
-        atoms.arrays["door_system"] = np.where(atoms.get_positions()[:, 2] >= 0, 1, -1)
-        forces = self.verlet_step(atoms, forces=forces)
-
+    def physics_step(self, atoms: Atoms, door: Literal["open", "closed"], forces=None):
         # walls
         cell: Cell = atoms.get_cell()
         pos: np.ndarray = atoms.get_positions()
         vel: np.ndarray = atoms.get_velocities()
+        atoms.arrays["door_system"] = np.where(pos[:, 2] >= cell.cellpar()[2], 1, -1)
 
         # elastic collision with cell boundaries via fractional coordinates
         cell_matrix = cell.array  # (3, 3), rows are cell vectors
@@ -154,18 +182,51 @@ class DemonMD(MolecularDynamics):
         pos = frac @ cell_matrix
 
         # elastic collision with the door wall (xy-plane, z=0) when closed
-        if step_deps.door == "closed":
+        if door == "closed":
             system = atoms.arrays["door_system"]
-            # above-system atoms that crossed to z<0
-            mask_above = (system == 1) & (pos[:, 2] < 0)
+            # above-system atoms that crossed to z<L/2
+            mask_above = (system == 1) & (pos[:, 2] < 0.5 * cell_matrix[2, 2])
             vel[mask_above, 2] *= -1
-            pos[mask_above, 2] *= -1
-            # below-system atoms that crossed to z>0
-            mask_below = (system == -1) & (pos[:, 2] > 0)
+            pos[mask_above, 2] = cell_matrix[2, 2] - pos[mask_above, 2]
+            # below-system atoms that crossed to z>L/2
+            mask_below = (system == -1) & (pos[:, 2] > 0.5 * cell_matrix[2, 2])
             vel[mask_below, 2] *= -1
-            pos[mask_below, 2] *= -1
-
+            pos[mask_below, 2] = 0.5 * cell_matrix[2, 2] - pos[mask_below, 2]
         atoms.set_positions(pos)
         atoms.set_velocities(vel)
+        return forces
 
+    def step(self, forces=None):
+        print("STEP:", self.nsteps)
+        atoms = self.atoms
+        step_deps = System.from_atoms(atoms)
+
+        if self.demon_enabled:
+            self.timer -= 1
+            while self.timer <= 0:
+                result = self.agent.run_sync(
+                    user_prompt=(f"STEP: {self.nsteps}"),
+                    deps=step_deps,
+                    output_type=int,
+                    event_stream_handler=printout,
+                    message_history=self.messages,
+                )
+                print("OUTPUT:", result.output)
+                if result.output == 42:
+                    print("AGENT DECLARED COMPLETE")
+                    self.demon_enabled = False
+
+                self.messages = result.all_messages()
+                self.messages_json = result.all_messages_json()
+                self.timer = result.output
+
+        atoms.info.update(
+            {
+                "door": step_deps.door,
+                "T_a": step_deps.temp_above,
+                "T_b": step_deps.temp_below,
+            }
+        )
+        forces = self.verlet_step(atoms, forces=forces)
+        forces = self.physics_step(atoms, step_deps.door, forces=forces)
         return forces
