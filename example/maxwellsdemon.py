@@ -1,11 +1,9 @@
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 import numpy as np
 from demon import DemonMD
-from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.models.openai import OpenAIChatModel
 from pathlib import Path
-from ase.io import read, write
-from ase import units, Atoms
+from ase.io import write
+from ase import Atoms
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.calculators.ff import ForceField
 
@@ -43,5 +41,5 @@ MaxwellBoltzmannDistribution(atoms, temperature_K=5000, force_temp=True)
 dyn = DemonMD(model, atoms, timestep=1)
 dyn.demon_enabled = True
 dyn.attach(write, 1, root / "simulation.xyz", atoms, format="extxyz", append=True)
-dyn.run(steps=1000)
+dyn.run(steps=500)
 (root / "trajectory.json").write_bytes(dyn.messages_json)

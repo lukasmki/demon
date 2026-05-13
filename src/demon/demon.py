@@ -1,10 +1,25 @@
 import numpy as np
 from ase.cell import Cell
 from pydantic import BaseModel, PrivateAttr
-from pydantic_ai import Agent, RunContext, PartEndEvent
+from pydantic_ai import (
+    Agent,
+    RunContext,
+    PartEndEvent,
+    ToolCallPart,
+    ThinkingPart,
+    TextPart,
+    UsageLimits,
+    UsageLimitExceeded,
+)
 from typing import IO, Annotated, AsyncIterable, Literal
 from ase.md.md import MolecularDynamics
 from ase import Atoms, units
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.text import Text
+
+_console = Console()
 
 
 class System(BaseModel):
@@ -41,10 +56,10 @@ class System(BaseModel):
             symbols=atoms.get_chemical_symbols(),
             positions=atoms.get_positions().tolist(),
             velocities=atoms.get_velocities().tolist(),
-            cell=atoms.get_cell().cellpar(),
+            cell=atoms.get_cell().cellpar().tolist(),
             temp_above=float(T_a),
             temp_below=float(T_b),
-            door=atoms.info.get("door", "open"),
+            door=atoms.info.get("door", "closed"),
         )
         inst._atoms = atoms
         return inst
@@ -62,18 +77,50 @@ class System(BaseModel):
         self.symbols = atoms.get_chemical_symbols()
         self.positions = pos.tolist()
         self.velocities = vel.tolist()
-        self.cell = cell.cellpar()
+        self.cell = cell.cellpar().tolist()
         self.temp_above = float(T_a)
         self.temp_below = float(T_b)
-        self.door = atoms.info.get("door", "open")
+        self.door = atoms.info.get("door", "closed")
         self._atoms = atoms
 
 
 async def printout(ctx: RunContext[System], events: AsyncIterable):
     async for event in events:
         if isinstance(event, PartEndEvent):
-            print(event.part)
-            print()
+            part = event.part
+            if isinstance(part, ToolCallPart):
+                if isinstance(part.args, str):
+                    argstr = part.args
+                else:
+                    argstr = ", ".join([f"{k}={v}" for k, v in part.args.items()])
+                call_text = Text()
+                call_text.append(part.tool_name, style="bold cyan")
+                call_text.append(f"({argstr})", style="dim")
+                _console.print(
+                    Panel(
+                        call_text,
+                        title="[bold yellow]Tool Call[/bold yellow]",
+                        border_style="yellow",
+                    )
+                )
+            elif isinstance(part, ThinkingPart):
+                _console.print(
+                    Panel(
+                        Markdown(part.content),
+                        title="[bold magenta]Thinking[/bold magenta]",
+                        border_style="magenta",
+                    )
+                )
+            elif isinstance(part, TextPart):
+                _console.print(
+                    Panel(
+                        Markdown(part.content),
+                        title="[bold blue]Output[/bold blue]",
+                        border_style="blue",
+                    )
+                )
+            else:
+                print(part)
 
 
 class DemonMD(MolecularDynamics):
@@ -93,19 +140,41 @@ class DemonMD(MolecularDynamics):
             model=model,
             deps_type=System,
             instructions=(
-                "You are given a box of particles that collide elastically against the walls of a box with side lengths, L. ",
-                "You control a door that divides the top and bottom halves of the box along the z=L/2 plane. ",
-                "Your goal is to maximize the temperature difference between the halves by controlling the flow of particles between the two subsystems. ",
-                "You must decide whether to leave the door in its current state or change the state of the door. ",
-                # "Your final result should be the number of time steps (>= 1) to advance the simulation before you make your next decision to open or close the door. ",
-                # "When you are finished making the decision, call the `final_result` tool with the number of steps to wait.",
-                "If you are satisfied with the acheieved temperature difference, return your use the `final_result` tool with a value of 42.",
+                "## Setup\n"
+                "You are controlling a molecular dynamics simulation. "
+                "N particles move freely inside a cubic box of side length L, bouncing elastically off the walls. "
+                "The box is split into two halves by an invisible wall (the 'door') at z = L/2: "
+                "the ABOVE half (z > L/2) and the BELOW half (z < L/2).\n\n"
+                "## Your goal\n"
+                "Maximize the temperature difference |T_above - T_below|. "
+                "Temperature is proportional to the average kinetic energy of particles in each half. "
+                "You win by sorting fast (hot) particles to one side and slow (cold) particles to the other.\n\n"
+                "## The door rules\n"
+                "- When the door is OPEN: particles pass freely between halves.\n"
+                "- When the door is CLOSED: particles cannot cross z = L/2 and bounce back elastically.\n"
+                "- A particle's 'home' half is determined by which side it was on when the door last acted on it — "
+                "closing the door traps each particle in whichever half it currently occupies.\n\n"
+                "## Available tools\n"
+                "- `get_system`: returns the full state — positions, velocities, and current temperatures T_above and T_below.\n"
+                "- `get_door_state`: returns whether the door is currently open or closed.\n"
+                "- `set_door_state`: open or close the door.\n"
+                "- `wait(steps)`: advance the simulation by the given number of time steps without changing the door. "
+                "Use this to let particles travel toward (or away from) the door before acting.\n\n"
+                "## Strategy hints\n"
+                "The optimal agent watches individual particle velocities and positions, then:\n"
+                "1. Opens the door briefly to let a fast particle cross from BELOW to ABOVE (or a slow one from ABOVE to BELOW).\n"
+                "2. Closes the door immediately after to trap the temperature asymmetry.\n"
+                "A simpler but effective heuristic: if T_below > T_above, open the door so heat flows upward on average; "
+                "once T_above > T_below, close the door to lock in the difference. "
+                "Repeat, always reinforcing whichever half is already hotter.\n\n"
+                "## Termination\n"
+                "When you are satisfied with the achieved temperature difference, call the `finished` tool to release control of the simulation. "
+                "You do NOT need to reach a perfect outcome — stop when further improvement seems unlikely."
             ),
         )
         self.register_tools(self.agent)
         self.messages = []
         self.messages_json: bytes = bytes()
-        self.timer = 0
         self.demon_enabled: bool = demon_enabled
 
     def register_tools(self, agent: Agent[System, str]) -> None:
@@ -125,21 +194,39 @@ class DemonMD(MolecularDynamics):
         ) -> str:
             "Sets the door to the open or closed state"
             ctx.deps.door = state
+            ctx.deps._atoms.info["door"] = state
             return f"The door is {state}."
 
         @agent.tool
         def wait(ctx: RunContext[System], steps: int) -> str:
             "Advance the simulation by number of time steps"
             for _ in range(steps):
-                self.verlet_step(ctx.deps._atoms)
-                self.physics_step(ctx.deps._atoms, door=ctx.deps.door)
+                a = ctx.deps._atoms
+                a.arrays["door_system"] = np.where(
+                    a.get_positions()[:, 2] >= 0.5 * a.get_cell()[2, 2], 1, -1
+                )
+                self.verlet_step(a)
+                self.physics_step(a, door=ctx.deps.door)
+                ctx.deps.update_from_atoms(a)
+                a.info.update(
+                    {
+                        "door": ctx.deps.door,
+                        "T_a": ctx.deps.temp_above,
+                        "T_b": ctx.deps.temp_below,
+                    }
+                )
                 self.nsteps += 1
                 self.call_observers()
-                # print("STEP", ctx.deps._atoms.positions)
-            ctx.deps.update_from_atoms(ctx.deps._atoms)
+                # if self.nsteps >= self.max_steps:
+                #     finished()
             return f"Simulation advanced by {steps}."
 
-    def verlet_step(self, atoms, forces=None):
+        @agent.tool_plain
+        def finished() -> None:
+            "Declare you are finished with the task."
+            self.demon_enabled = False
+
+    def verlet_step(self, atoms: Atoms, forces=None):
         # VelocityVerlet.step()
         if forces is None:
             forces = atoms.get_forces(md=True)
@@ -160,7 +247,6 @@ class DemonMD(MolecularDynamics):
         cell: Cell = atoms.get_cell()
         pos: np.ndarray = atoms.get_positions()
         vel: np.ndarray = atoms.get_velocities()
-        atoms.arrays["door_system"] = np.where(pos[:, 2] >= cell.cellpar()[2], 1, -1)
 
         # elastic collision with cell boundaries via fractional coordinates
         cell_matrix = cell.array  # (3, 3), rows are cell vectors
@@ -181,7 +267,7 @@ class DemonMD(MolecularDynamics):
 
         pos = frac @ cell_matrix
 
-        # elastic collision with the door wall (xy-plane, z=0) when closed
+        # elastic collision with the door wall (xy-plane, z=L/2) when closed
         if door == "closed":
             system = atoms.arrays["door_system"]
             # above-system atoms that crossed to z<L/2
@@ -191,35 +277,20 @@ class DemonMD(MolecularDynamics):
             # below-system atoms that crossed to z>L/2
             mask_below = (system == -1) & (pos[:, 2] > 0.5 * cell_matrix[2, 2])
             vel[mask_below, 2] *= -1
-            pos[mask_below, 2] = 0.5 * cell_matrix[2, 2] - pos[mask_below, 2]
+            pos[mask_below, 2] = cell_matrix[2, 2] - pos[mask_below, 2]
         atoms.set_positions(pos)
         atoms.set_velocities(vel)
         return forces
 
     def step(self, forces=None):
-        print("STEP:", self.nsteps)
         atoms = self.atoms
         step_deps = System.from_atoms(atoms)
-
-        if self.demon_enabled:
-            self.timer -= 1
-            while self.timer <= 0:
-                result = self.agent.run_sync(
-                    user_prompt=(f"STEP: {self.nsteps}"),
-                    deps=step_deps,
-                    output_type=int,
-                    event_stream_handler=printout,
-                    message_history=self.messages,
-                )
-                print("OUTPUT:", result.output)
-                if result.output == 42:
-                    print("AGENT DECLARED COMPLETE")
-                    self.demon_enabled = False
-
-                self.messages = result.all_messages()
-                self.messages_json = result.all_messages_json()
-                self.timer = result.output
-
+        atoms.arrays["door_system"] = np.where(
+            atoms.get_positions()[:, 2] >= 0.5 * atoms.get_cell()[2, 2], 1, -1
+        )
+        forces = self.verlet_step(atoms, forces=forces)
+        forces = self.physics_step(atoms, step_deps.door, forces=forces)
+        step_deps.update_from_atoms(atoms)
         atoms.info.update(
             {
                 "door": step_deps.door,
@@ -227,6 +298,19 @@ class DemonMD(MolecularDynamics):
                 "T_b": step_deps.temp_below,
             }
         )
-        forces = self.verlet_step(atoms, forces=forces)
-        forces = self.physics_step(atoms, step_deps.door, forces=forces)
+        if self.demon_enabled:
+            try:
+                result = self.agent.run_sync(
+                    user_prompt=(f"STEP: {self.nsteps}"),
+                    deps=step_deps,
+                    output_type=str,
+                    event_stream_handler=printout,
+                    message_history=self.messages,
+                    usage_limits=UsageLimits(request_limit=100),
+                )
+            except UsageLimitExceeded:
+                self.demon_enabled = False
+            self.messages = result.all_messages()
+            self.messages_json = result.all_messages_json()
+
         return forces
