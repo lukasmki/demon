@@ -52,6 +52,36 @@ def plot_comparison(run_data: dict[str, list[Atoms]]):
     return fig
 
 
+def plot_temperature_difference(traj: list[Atoms], model: str):
+    steps = np.arange(len(traj))
+    T_a = np.array([atoms.info.get("T_a", float("nan")) for atoms in traj])
+    T_b = np.array([atoms.info.get("T_b", float("nan")) for atoms in traj])
+    door = [atoms.info.get("door", "open") for atoms in traj]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+
+    ax1.plot(steps, T_a, label="Above", color="tomato")
+    ax1.plot(steps, T_b, label="Below", color="steelblue")
+    ax1.set_ylabel("Temperature (K)")
+    ax1.legend()
+
+    delta_T = T_a - T_b
+    ax2.plot(steps, delta_T, color="purple")
+    ax2.axhline(0, color="gray", linestyle="--", linewidth=0.8)
+    ax2.set_ylabel("ΔT = T_above - T_below (K)")
+    ax2.set_xlabel("Step")
+
+    # shade closed-door regions
+    closed = np.array(door) == "closed"
+    for ax in (ax1, ax2):
+        for start, end in _runs(closed, steps):
+            ax.axvspan(start, end, alpha=0.12, color="red", label="_")
+
+    fig.suptitle(f"Maxwell's Demon — {model}")
+    fig.tight_layout()
+    return fig
+
+
 def plot_animation(traj: list[Atoms], model: str) -> tuple:
     import matplotlib.animation as animation
 
@@ -142,11 +172,16 @@ if __name__ == "__main__":
     }
 
     fig = plot_comparison(run_data)
-    fig.savefig(root / "comparison.png", dpi=150, bbox_inches="tight")
-    print("Saved comparison.png")
+    fig.savefig(root / "all_comparison.png", dpi=150, bbox_inches="tight")
+    print("Saved all_comparison.png")
     plt.close(fig)
 
     for model, traj in run_data.items():
+        fig = plot_temperature_difference(traj, model)
+        fig.savefig(root / f"{model}.png", dpi=150, bbox_inches="tight")
+        print(f"Saved {model}.png")
+        plt.close(fig)
+
         fig_anim, anim = plot_animation(traj, model)
         out = root / f"{model}.gif"
         anim.save(out, writer="pillow", fps=20)
