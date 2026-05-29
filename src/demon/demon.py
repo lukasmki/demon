@@ -219,7 +219,7 @@ class DemonMD(MolecularDynamics):
                 self.call_observers()
                 # if self.nsteps >= self.max_steps:
                 #     finished()
-            return f"Simulation advanced by {steps}."
+            return f"Simulation advanced by {steps} step(s)."
 
         @agent.tool_plain
         def finished() -> None:
@@ -308,9 +308,8 @@ class DemonMD(MolecularDynamics):
                     message_history=self.messages,
                     usage_limits=UsageLimits(request_limit=100),
                 )
+                self.messages = result.all_messages()
+                self.messages_json = result.all_messages_json()
             except UsageLimitExceeded:
                 self.demon_enabled = False
-            self.messages = result.all_messages()
-            self.messages_json = result.all_messages_json()
-
         return forces
