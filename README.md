@@ -4,32 +4,34 @@ A simulation of Maxwell's demon using an LLM as the demon.
 
 ## Models
 
-| Model (short) |             Model (long) |                                          Settings |
-|---------------|--------------------------|---------------------------------------------------|
-|        Gemini | `gemini-3-flash-preview` |           Include thoughts, thinking level medium |
-|       ChatGPT |                `gpt-5.4` | Reasoning summary = auto, reasoning effort medium |
-|        Claude |      `claude-sonnet-4-6` |                  Adaptive thinking, effort medium |
+| Model (short) |             Model (long)       |                                          Settings |
+|---------------|--------------------------------|---------------------------------------------------|
+|        Gemini | `gemini-3-flash-preview`       |           Include thoughts, thinking level medium |
+|       ChatGPT |                `gpt-5.4`       | Reasoning summary = auto, reasoning effort medium |
+|        Claude |      `claude-sonnet-4-6`       |                  Adaptive thinking, effort medium |
+|    Small Qwen |      `unsloth/Qwen3.5-2B-GGUF` |                           Reasoning effort medium |
 
 ## Results
 
 ### Simulation Trajectories
 
 <div style="display: block" align="center">
-    <img src="benchmark/gemini.gif"  width="30%">
-    <img src="benchmark/claude.gif"  width="30%">
-    <img src="benchmark/chatgpt.gif" width="30%">
+    <img src="benchmark/gemini.gif"  width="24%" alt="gemini">
+    <img src="benchmark/claude.gif"  width="24%" alt="claude">
+    <img src="benchmark/chatgpt.gif" width="24%" alt="chatgpt">
+    <img src="benchmark/qwen.gif"    width="24%" alt="qwen">
 </div>
 
 ### Temperature Separation
 
 <div align="center">
-    <img src="benchmark/all_comparison.png" width="75%">
+    <img src="benchmark/all_comparison.png" width="75%" alt="temperature comparison">
 </div>
 
 ### Model Usage Statistics
 
 <div align="center">
-    <img src="benchmark/all_stats.png" width="75%">
+    <img src="benchmark/all_stats.png" width="75%" alt="chat comparison">
 </div>
 
 ## Methods
