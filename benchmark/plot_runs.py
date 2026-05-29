@@ -20,7 +20,12 @@ def _runs(mask: np.ndarray, x: np.ndarray):
 
 
 def plot_comparison(run_data: dict[str, list[Atoms]]):
-    colors = {"gemini": "steelblue", "chatgpt": "seagreen", "claude": "tomato"}
+    colors = {
+        "gemini": "steelblue",
+        "chatgpt": "seagreen",
+        "claude": "tomato",
+        "qwen": "orchid",
+    }
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
 
@@ -164,7 +169,7 @@ def plot_animation(traj: list[Atoms], model: str) -> tuple:
 if __name__ == "__main__":
     root = Path(__file__).parent
     data = root / "data"
-    models = ["gemini", "chatgpt", "claude"]
+    models = ["gemini", "chatgpt", "claude", "qwen"]
 
     run_data: dict[str, list[Atoms]] = {
         model: cast(list[Atoms], io.read((data / model).with_suffix(".xyz"), index=":"))
