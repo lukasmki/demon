@@ -1,3 +1,4 @@
+import attr
 from ase.calculators.calculator import Calculator
 import numpy as np
 from ase.cell import Cell
@@ -240,9 +241,9 @@ class DemonMD(MolecularDynamics):
 
         @agent.tool_plain
         def finished() -> None:
-            "Declare you are finished with the task."
+            "Declare you are finished with the task. After calling this tool, produce your final output."
             self.demon_enabled = False
-            _console.print("DEMON IS SET TO FALSE")
+            # _console.print("DEMON IS SET TO FALSE")
 
     def verlet_step(self, atoms: Atoms, forces=None):
         # VelocityVerlet.step()
@@ -339,11 +340,22 @@ class DemonMD(MolecularDynamics):
 class WalledVdW(Calculator):
     implemented_properties = ["energy", "forces"]
 
-    def __init__(self, epsilonij: float, sigmaij: float, gamma: float = 0.05, **kwargs):
+    def __init__(
+        self,
+        epsilonij: float,
+        sigmaij: float,
+        repulsive: bool = True,
+        attractive: bool = True,
+        gamma: float = 0.05,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.gamma = gamma
         self.Aij = 4.0 * epsilonij * sigmaij**12
         self.Bij = 4.0 * epsilonij * sigmaij**6
+
+        self.attractive = attractive
+        self.repulsive = repulsive
 
     def calculate(self, atoms=None, properties=["energy", "forces"], system_changes=[]):
         super().calculate(atoms, properties, system_changes)
@@ -371,12 +383,21 @@ class WalledVdW(Calculator):
         ir12 = ir6**2
 
         # E = A/r^12 - B/r^6
-        pair_energy = self.Aij * ir12 - self.Bij * ir6
+        pair_energy = np.zeros_like(ir6)
+        if self.attractive:
+            pair_energy -= self.Bij * ir6
+        if self.repulsive:
+            pair_energy += self.Aij * ir12
         energy = 0.5 * np.sum(pair_energy)
 
-        # F = (12A/r^13 - 6B/r^7) * r_vec
-        scalar = 12.0 * self.Aij * ir12 - 6.0 * self.Bij * ir6  # (N, N)
-        forces = np.sum(scalar[:, :, np.newaxis] * r, axis=1)  # (N, 3)
+        # F = (12A/r^13 - 6B/r^7) * r_hat
+        scalar_forces = np.zeros_like(ir6)
+        if self.attractive:
+            scalar_forces -= 6.0 * self.Bij * ir6
+        if self.repulsive:
+            scalar_forces += 12.0 * self.Aij * ir12
+        scalar_forces *= ir2
+        forces = np.sum(scalar_forces[:, :, np.newaxis] * r, axis=1)  # (N, 3)
 
         self.results = {
             "energy": energy,
