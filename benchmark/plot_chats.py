@@ -131,6 +131,7 @@ def make_readable(history: History) -> str:
 
 if __name__ == "__main__":
     root = Path(__file__).parent
+    plots = root / "plots"
     data = root / "data"
     models = ["gemini", "chatgpt", "claude", "qwen"]
 
@@ -147,8 +148,8 @@ if __name__ == "__main__":
 
     for model, history in chat_data.items():
         replay = make_readable(history)
-        (root / model).with_suffix(".svg").write_text(replay)
+        (plots / model).with_suffix(".svg").write_text(replay)
 
     fig = plot_stats(chat_stats)
-    fig.savefig(root / "all_stats.png", dpi=150, bbox_inches="tight")
+    fig.savefig(plots / "all_stats.png", dpi=150, bbox_inches="tight")
     plt.close(fig)

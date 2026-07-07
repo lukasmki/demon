@@ -168,6 +168,7 @@ def plot_animation(traj: list[Atoms], model: str) -> tuple:
 
 if __name__ == "__main__":
     root = Path(__file__).parent
+    plots = root / "plots"
     data = root / "data"
     models = ["gemini", "chatgpt", "claude", "qwen"]
 
@@ -177,18 +178,18 @@ if __name__ == "__main__":
     }
 
     fig = plot_comparison(run_data)
-    fig.savefig(root / "all_comparison.png", dpi=150, bbox_inches="tight")
+    fig.savefig(plots / "all_comparison.png", dpi=150, bbox_inches="tight")
     print("Saved all_comparison.png")
     plt.close(fig)
 
     for model, traj in run_data.items():
         fig = plot_temperature_difference(traj, model)
-        fig.savefig(root / f"{model}.png", dpi=150, bbox_inches="tight")
+        fig.savefig(plots / f"{model}.png", dpi=150, bbox_inches="tight")
         print(f"Saved {model}.png")
         plt.close(fig)
 
         fig_anim, anim = plot_animation(traj, model)
-        out = root / f"{model}.gif"
+        out = plots / f"{model}.gif"
         anim.save(out, writer="pillow", fps=20)
         print(f"Saved {out.name}")
         plt.close(fig_anim)

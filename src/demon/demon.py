@@ -1,3 +1,4 @@
+from ase.calculators.calculator import Calculator
 import numpy as np
 from ase.cell import Cell
 from pydantic import BaseModel, PrivateAttr
@@ -11,7 +12,7 @@ from pydantic_ai import (
     UsageLimits,
     UsageLimitExceeded,
 )
-from typing import IO, Annotated, AsyncIterable, Literal
+from typing import IO, Annotated, AsyncIterable, Literal, cast
 from ase.md.md import MolecularDynamics
 from ase import Atoms, units
 from rich.console import Console
@@ -37,6 +38,8 @@ class System(BaseModel):
     ]
     temp_above: Annotated[float, "Temperature (K) of particles above z=L/2"]
     temp_below: Annotated[float, "Temperature (K) of particles below z=L/2"]
+    n_above: Annotated[int, "Number of particles above z=L/2"]
+    n_below: Annotated[int, "Number of particles below z=L/2"]
 
     # hidden
     _atoms: Atoms = PrivateAttr()
@@ -59,6 +62,8 @@ class System(BaseModel):
             cell=atoms.get_cell().cellpar().tolist(),
             temp_above=float(T_a),
             temp_below=float(T_b),
+            n_above=int(np.sum(above)),
+            n_below=int(np.sum(below)),
             door=atoms.info.get("door", "closed"),
         )
         inst._atoms = atoms
@@ -80,6 +85,8 @@ class System(BaseModel):
         self.cell = cell.cellpar().tolist()
         self.temp_above = float(T_a)
         self.temp_below = float(T_b)
+        self.n_above = int(np.sum(above))
+        self.n_below = int(np.sum(below))
         self.door = atoms.info.get("door", "closed")
         self._atoms = atoms
 
@@ -142,20 +149,27 @@ class DemonMD(MolecularDynamics):
             instructions=(
                 "## Setup\n"
                 "You are controlling a molecular dynamics simulation. "
-                "N particles move freely inside a cubic box of side length L, bouncing elastically off the walls. "
+                "N interacting atoms move freely inside boxes of height L, bouncing elastically off the walls. "
                 "The box is split into two halves by an invisible wall (the 'door') at z = L/2: "
                 "the ABOVE half (z > L/2) and the BELOW half (z < L/2).\n\n"
                 "## Your goal\n"
-                "Maximize the temperature difference |T_above - T_below|. "
+                "Maximize the absolute temperature difference |T_above - T_below| between the two halves. "
                 "Temperature is proportional to the average kinetic energy of particles in each half. "
                 "You win by sorting fast (hot) particles to one side and slow (cold) particles to the other.\n\n"
+                "## Particle balance constraint\n"
+                "You MUST end the simulation with exactly N/2 particles on each side. "
+                "Any temperature difference achieved with an unequal particle split is invalid. "
+                "Before calling `finished`, verify via `get_system` that both halves contain equal particle counts. "
+                "If the counts are unequal, reopen the door and wait for particles to redistribute, or selectively "
+                "allow particles to cross until balance is restored.\n\n"
                 "## The door rules\n"
                 "- When the door is OPEN: particles pass freely between halves.\n"
                 "- When the door is CLOSED: particles cannot cross z = L/2 and bounce back elastically.\n"
                 "- A particle's 'home' half is determined by which side it was on when the door last acted on it — "
                 "closing the door traps each particle in whichever half it currently occupies.\n\n"
                 "## Available tools\n"
-                "- `get_system`: returns the full state — positions, velocities, and current temperatures T_above and T_below.\n"
+                "- `get_system`: returns the full state — positions, velocities, current temperatures T_above and T_below, "
+                "and particle counts n_above and n_below.\n"
                 "- `get_door_state`: returns whether the door is currently open or closed.\n"
                 "- `set_door_state`: open or close the door.\n"
                 "- `wait(steps)`: advance the simulation by the given number of time steps without changing the door. "
@@ -164,12 +178,15 @@ class DemonMD(MolecularDynamics):
                 "The optimal agent watches individual particle velocities and positions, then:\n"
                 "1. Opens the door briefly to let a fast particle cross from BELOW to ABOVE (or a slow one from ABOVE to BELOW).\n"
                 "2. Closes the door immediately after to trap the temperature asymmetry.\n"
+                "3. Always swaps particles in pairs (one fast crossing up for every slow crossing down) to keep counts balanced.\n"
                 "A simpler but effective heuristic: if T_below > T_above, open the door so heat flows upward on average; "
                 "once T_above > T_below, close the door to lock in the difference. "
-                "Repeat, always reinforcing whichever half is already hotter.\n\n"
+                "Repeat, always reinforcing whichever half is already hotter. "
+                "Track running counts throughout and correct any imbalance before finishing.\n\n"
                 "## Termination\n"
                 "When you are satisfied with the achieved temperature difference, call the `finished` tool to release control of the simulation. "
-                "You do NOT need to reach a perfect outcome — stop when further improvement seems unlikely."
+                "You do NOT need to reach a perfect outcome — stop when further improvement seems unlikely. "
+                "Reminder: `finished` is only valid when n_above == n_below == N/2."
             ),
         )
         self.register_tools(self.agent)
@@ -213,18 +230,19 @@ class DemonMD(MolecularDynamics):
                         "door": ctx.deps.door,
                         "T_a": ctx.deps.temp_above,
                         "T_b": ctx.deps.temp_below,
+                        "N_a": ctx.deps.n_above,
+                        "N_b": ctx.deps.n_below,
                     }
                 )
                 self.nsteps += 1
                 self.call_observers()
-                # if self.nsteps >= self.max_steps:
-                #     finished()
             return f"Simulation advanced by {steps} step(s)."
 
         @agent.tool_plain
         def finished() -> None:
             "Declare you are finished with the task."
             self.demon_enabled = False
+            _console.print("DEMON IS SET TO FALSE")
 
     def verlet_step(self, atoms: Atoms, forces=None):
         # VelocityVerlet.step()
@@ -296,8 +314,11 @@ class DemonMD(MolecularDynamics):
                 "door": step_deps.door,
                 "T_a": step_deps.temp_above,
                 "T_b": step_deps.temp_below,
+                "N_a": step_deps.n_above,
+                "N_b": step_deps.n_below,
             }
         )
+        # _console.print(f"DEMON IS SET TO {self.demon_enabled}")
         if self.demon_enabled:
             try:
                 result = self.agent.run_sync(
@@ -313,3 +334,51 @@ class DemonMD(MolecularDynamics):
             except UsageLimitExceeded:
                 self.demon_enabled = False
         return forces
+
+
+class WalledVdW(Calculator):
+    implemented_properties = ["energy", "forces"]
+
+    def __init__(self, epsilonij: float, sigmaij: float, gamma: float = 0.05, **kwargs):
+        super().__init__(**kwargs)
+        self.gamma = gamma
+        self.Aij = 4.0 * epsilonij * sigmaij**12
+        self.Bij = 4.0 * epsilonij * sigmaij**6
+
+    def calculate(self, atoms=None, properties=["energy", "forces"], system_changes=[]):
+        super().calculate(atoms, properties, system_changes)
+        atoms = cast(Atoms, self.atoms)
+        pos = atoms.get_positions()
+
+        # get atoms in above and below subsystems
+        door_state = atoms.info.get("door", "closed")
+        if door_state == "open":
+            mask = np.ones((len(atoms), len(atoms)), dtype=bool)
+        else:
+            cell = atoms.get_cell()
+            above = pos[:, 2] > 0.5 * cell[2, 2]
+            below = ~above
+            mask = np.outer(above, above) | np.outer(below, below)
+        np.fill_diagonal(mask, False)
+
+        r = pos[:, np.newaxis, :] - pos[np.newaxis, :, :]  # (N, N, 3)
+        r2 = np.sum(r**2, axis=-1)  # (N, N)
+        np.fill_diagonal(r2, np.inf)  # exclude self-interactions
+
+        # shielded interaction to prevent divergence
+        ir2 = np.where(mask, 1.0 / (r2 + self.gamma**2), 0.0)
+        ir6 = ir2**3
+        ir12 = ir6**2
+
+        # E = A/r^12 - B/r^6
+        pair_energy = self.Aij * ir12 - self.Bij * ir6
+        energy = 0.5 * np.sum(pair_energy)
+
+        # F = (12A/r^13 - 6B/r^7) * r_vec
+        scalar = 12.0 * self.Aij * ir12 - 6.0 * self.Bij * ir6  # (N, N)
+        forces = np.sum(scalar[:, :, np.newaxis] * r, axis=1)  # (N, 3)
+
+        self.results = {
+            "energy": energy,
+            "forces": forces,
+        }
