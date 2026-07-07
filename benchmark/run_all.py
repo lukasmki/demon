@@ -45,7 +45,12 @@ def make_box(N: int = 20, L: float = 40, T: float = 5000, min_dist=4.0) -> Atoms
 
 def run(model: Model, atoms: Atoms, outpath: Path | str, max_steps: int = 500) -> None:
     # Ar-Ar VdW interaction with wall blocking
-    atoms.calc = WalledVdW(epsilonij=0.0104, sigmaij=3.405, gamma=0.05)
+    atoms.calc = WalledVdW(
+        epsilonij=0.0104,
+        sigmaij=3.405,
+        gamma=0.5 * 3.405,
+        attractive=False,
+    )
 
     frames = []
 
@@ -56,7 +61,7 @@ def run(model: Model, atoms: Atoms, outpath: Path | str, max_steps: int = 500) -
         model,
         atoms,
         timestep=1.0 * units.fs,
-        demon_enabled=False,
+        demon_enabled=True,
     )
     dyn.attach(add_frame, 10, atoms)
     dyn.run(steps=max_steps)
