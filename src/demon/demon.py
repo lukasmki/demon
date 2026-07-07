@@ -1,4 +1,3 @@
-import attr
 from ase.calculators.calculator import Calculator
 import numpy as np
 from ase.cell import Cell
