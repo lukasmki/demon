@@ -1,22 +1,19 @@
-from rich.terminal_theme import TerminalTheme
-from rich.json import JSON
-from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.text import Text
-from rich.console import Console
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-
 from pydantic_ai import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    ThinkingPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
 )
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.text import Text
 
 type History = list[ModelRequest | ModelResponse]
 
@@ -44,12 +41,8 @@ def calc_stats(history: History) -> dict:
 
 
 def plot_stats(chat_stats: dict[str, dict[str, int]]):
-    colors = {
-        "gemini": "steelblue",
-        "chatgpt": "seagreen",
-        "claude": "tomato",
-        "qwen": "orchid",
-    }
+    cmap = plt.get_cmap("tab10")
+    colors = {model: cmap(i % 10) for i, model in enumerate(chat_stats.keys())}
 
     fig, axes = plt.subplots(1, 1, figsize=(12, 7), sharex=True)
     axes.grid(alpha=0.5)
@@ -133,7 +126,7 @@ if __name__ == "__main__":
     root = Path(__file__).parent
     plots = root / "plots"
     data = root / "data"
-    models = ["gemini", "chatgpt", "claude", "qwen"]
+    models = sorted(p.stem for p in data.glob("*.json"))
 
     chat_data: dict[str, History] = {
         model: ModelMessagesTypeAdapter.validate_json(

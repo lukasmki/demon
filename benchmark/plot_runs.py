@@ -1,8 +1,9 @@
-from typing import cast
 from pathlib import Path
-from ase import Atoms, io
+from typing import cast
+
 import matplotlib.pyplot as plt
 import numpy as np
+from ase import Atoms, io
 
 
 def _runs(mask: np.ndarray, x: np.ndarray):
@@ -20,12 +21,8 @@ def _runs(mask: np.ndarray, x: np.ndarray):
 
 
 def plot_comparison(run_data: dict[str, list[Atoms]]):
-    colors = {
-        "gemini": "steelblue",
-        "chatgpt": "seagreen",
-        "claude": "tomato",
-        "qwen": "orchid",
-    }
+    cmap = plt.get_cmap("tab10")
+    colors = {model: cmap(i % 10) for i, model in enumerate(run_data.keys())}
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
 
@@ -34,7 +31,7 @@ def plot_comparison(run_data: dict[str, list[Atoms]]):
         T_a = np.array([atoms.info.get("T_a", float("nan")) for atoms in traj])
         T_b = np.array([atoms.info.get("T_b", float("nan")) for atoms in traj])
         door = [atoms.info.get("door", "open") for atoms in traj]
-        color = colors.get(model, "gray")
+        color = colors[model]
 
         delta_T = T_a - T_b
         ax1.plot(steps, np.abs(delta_T), color=color, label=model, alpha=0.85)
@@ -170,7 +167,7 @@ if __name__ == "__main__":
     root = Path(__file__).parent
     plots = root / "plots"
     data = root / "data"
-    models = ["gemini", "chatgpt", "claude", "qwen"]
+    models = sorted(p.stem for p in data.glob("*.xyz"))
 
     run_data: dict[str, list[Atoms]] = {
         model: cast(list[Atoms], io.read((data / model).with_suffix(".xyz"), index=":"))

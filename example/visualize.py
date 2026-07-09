@@ -1,9 +1,10 @@
 from pathlib import Path
-from ase import Atoms, io
 from typing import cast
-import matplotlib.pyplot as plt
+
 import matplotlib.animation as animation
+import matplotlib.pyplot as plt
 import numpy as np
+from ase import Atoms, io
 
 
 def plot_temperature_difference(traj: list[Atoms]):
