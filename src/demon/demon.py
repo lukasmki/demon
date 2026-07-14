@@ -147,7 +147,9 @@ class DemonMD(MolecularDynamics):
                 )
                 self.messages = result.all_messages()
                 self.messages_json = result.all_messages_json()
+                self.nsteps -= 1
             except UsageLimitExceeded:
                 self.demon_enabled = False
-        self.nsteps -= 1
+        else:
+            self.physics_step(atoms, forces)
         return forces

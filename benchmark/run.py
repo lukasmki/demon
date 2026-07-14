@@ -9,13 +9,14 @@ from pydantic_ai.models.openai import (
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from demon.demon import DemonMD
-from demon.system import SystemJSON
+from demon.system import SystemJSON, SystemXYZ, SystemDebug
 from demon.utils import setup_system
 
 
 def main(
     name: str,
     model_name: str,
+    system: str,
     outpath: Path,
     N: int,
     V: float,
@@ -37,6 +38,13 @@ def main(
         3: (True, True, True),
     }
     eq_constraint, attract, repulse = difficulty.get(diff, difficulty[1])
+
+    systems = {
+        "json": SystemJSON,
+        "xyz": SystemXYZ,
+        "debug": SystemDebug,
+    }
+
     atoms = setup_system(N, V, T, VA=attract, VR=repulse, seed=seed)
     model = OpenAIChatModel(
         model_name=model_name,
@@ -47,7 +55,7 @@ def main(
     )
 
     frames = []
-    dyn = DemonMD(model, atoms, SystemJSON)
+    dyn = DemonMD(model, atoms, system=systems[system])
     dyn.attach(lambda x: frames.append(x.copy()), 10, atoms)
     dyn.run(steps=max_steps)
 
@@ -59,6 +67,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--model", type=str)
     parser.add_argument("--name", type=str, default="", required=False)
+    parser.add_argument("--system", type=str, default="json", required=False)
     parser.add_argument("--diff", type=int, default=1, required=False)
     parser.add_argument("--natoms", type=int, default=30, required=False)
     parser.add_argument("--volume", type=float, default=8000, required=False)
@@ -69,6 +78,8 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8000, required=False)
     args = parser.parse_args()
 
+    print("Running with arguments:", args)
+
     root = Path(__file__).parent
     data = root / "data"
     data.mkdir(parents=True, exist_ok=True)
@@ -78,6 +89,7 @@ if __name__ == "__main__":
     main(
         name=name,
         model_name=args.model,
+        system=args.system,
         outpath=outpath,
         N=args.natoms,
         V=args.volume,
