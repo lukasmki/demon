@@ -109,49 +109,12 @@ class System(ABC, BaseModel):
     def serialize(self) -> str: ...
 
 
-class SystemJSON(System):
-    @staticmethod
-    def system_prompt() -> str:
-        return """
-## Setup
-You are running a molecular dynamics simulation. The simulation box spans z from 0 to 2L and is divided into two cubic halves of side L: the ABOVE half (z > L) and the BELOW half (z < L), separated by an invisible wall (the 'door') at z = L. There are N atoms total, split evenly with N/2 starting in each half, all initialized at the same temperature T, moving freely and bouncing elastically off the outer walls. Particles interact with each other via a van der Waals potential, so their velocities are not fixed — they evolve from collisions and forces, not just free flight.
-
-## Your goal
-Maximize the absolute temperature difference |T_above - T_below| between the two halves, even though both halves begin at the same temperature. Temperature is proportional to the average kinetic energy of particles in each half. You win by using the door to sort fast (hot) particles into one half and slow (cold) particles into the other.
-
-## Particle balance constraint
-You MUST end the simulation with exactly N/2 particles on each side. Any temperature difference achieved with an unequal particle split is invalid. Before calling `finished`, verify via `get_system` that both halves contain equal particle counts. If the counts are unequal, reopen the door and wait for particles to redistribute, or selectively allow particles to cross until balance is restored.
-
-## The door rules
-- When the door is OPEN: particles pass freely between halves.
-- When the door is CLOSED: particles cannot cross z = L and bounce back elastically.
-- A particle's 'home' half is determined by which side it was on when the door last acted on it — closing the door traps each particle in whichever half it currently occupies.
-
-## Strategy hints
-The optimal agent watches individual particle velocities and positions, then:
-1. Opens the door briefly to let a fast particle cross from BELOW to ABOVE (or a slow one from ABOVE to BELOW).
-2. Closes the door immediately after to trap the temperature asymmetry.
-3. Always swaps particles in pairs (one fast crossing up for every slow crossing down) to keep counts balanced.
-A simpler but effective heuristic: if T_below > T_above, open the door so heat flows upward on average; once T_above > T_below, close the door to lock in the difference. Repeat, always reinforcing whichever half is already hotter. Track running counts throughout and correct any imbalance before finishing.
-
-## Termination
-When you are satisfied with the achieved temperature difference, call the `finished` tool to release control of the simulation. You do NOT need to reach a perfect outcome — stop when further improvement seems unlikely. Reminder: `finished` is only valid when n_above == n_below == N/2.
-""".strip()
-
-    @staticmethod
-    def user_prompt(dyn: MolecularDynamics) -> str:
-        return f"The current step index is {dyn.nsteps}."
-
-    def serialize(self) -> str:
-        return self.model_dump_json()
-
-
 class SystemDebug(System):
     @staticmethod
     def system_prompt() -> str:
         return """
 ## Setup
-You are controlling a molecular dynamics simulation. N atoms move inside two boxes of height L, bouncing elastically off the walls. The box is split into two halves by an invisible wall (the 'door') at z = L/2: the ABOVE half (z > L/2) and the BELOW half (z < L/2).
+You are controlling a molecular dynamics simulation. N atoms move inside two boxes of height L, bouncing elastically off the walls. The box is split into two halves by a controllable door at z = L/2: the ABOVE half (z > L/2) and the BELOW half (z < L/2).
 
 ## Instructions
 Verify that all tools work as described.
@@ -166,3 +129,50 @@ When you are satisfied that all tools are working properly call the `finished` t
 
     def serialize(self) -> str:
         return self.model_dump_json()
+
+
+class SystemJSON(System):
+    @staticmethod
+    def system_prompt() -> str:
+        return """
+## Setup
+You are running a molecular dynamics simulation. The simulation box spans z from 0 to 2L and is divided into two cubic halves of side L: the ABOVE half (z > L) and the BELOW half (z < L), separated by a controllable door at z = L. There are N atoms total, split evenly with N/2 starting in each half, all initialized at the same temperature T, moving freely and bouncing elastically off the outer walls. Particles interact with each other via a van der Waals potential, so their velocities are not fixed — they evolve from collisions and forces, not just free flight.
+
+## Your goal
+Maximize the absolute temperature difference |T_above - T_below| between the two halves. Temperature is proportional to the average kinetic energy of particles in each half. You win by using the door to sort fast (hot) particles into one half and slow (cold) particles into the other.
+
+## Particle balance constraint
+You MUST end the simulation with exactly N/2 particles on each side. Any temperature difference achieved with an unequal particle split is invalid. Before calling `finished`, verify via `get_system` that both halves contain equal particle counts. If the counts are unequal, reopen the door and wait for particles to redistribute, or selectively allow particles to cross until balance is restored.
+
+## The door rules
+- When the door is OPEN: particles pass freely between halves.
+- When the door is CLOSED: particles cannot cross z = L and bounce back elastically.
+
+## Strategy hints
+The optimal agent watches individual particle velocities and positions, then:
+1. Opens the door briefly to let a fast particle cross from BELOW to ABOVE (or a slow one from ABOVE to BELOW).
+2. Closes the door immediately after to trap the temperature asymmetry.
+3. Always swaps particles in pairs (one fast crossing up for every slow crossing down) to keep counts balanced.
+A simpler but effective heuristic: if T_above > T_below, open the door so heat flows upward on average; then, close the door to lock in the difference. Repeat, always reinforcing whichever half is already hotter. Track running counts throughout and correct any imbalance before finishing.
+
+## Termination
+When you are satisfied with the achieved temperature difference, call the `finished` tool to release control of the simulation. You do NOT need to reach a perfect outcome. Stop when further improvement seems unlikely.
+""".strip()
+
+    @staticmethod
+    def user_prompt(dyn: MolecularDynamics) -> str:
+        return f"The current step index is {dyn.nsteps}."
+
+    def serialize(self) -> str:
+        return self.model_dump_json()
+
+
+class SystemXYZ(SystemJSON):
+    def serialize(self) -> str:
+        from ase.io import write
+        from io import StringIO
+
+        stream = StringIO()
+        write(stream, self._atoms, format="extxyz")
+        stream.seek(0)
+        return stream.read()
