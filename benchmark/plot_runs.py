@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 from pathlib import Path
 from typing import cast
 
@@ -55,7 +56,7 @@ def plot_comparison(run_data: dict[str, list[Atoms]]):
 
 
 def plot_temperature_difference(traj: list[Atoms], model: str):
-    steps = np.arange(len(traj))
+    steps = np.arange(len(traj)) * 10  # every 10th frame is output
     T_a = np.array([atoms.info.get("T_a", float("nan")) for atoms in traj])
     T_b = np.array([atoms.info.get("T_b", float("nan")) for atoms in traj])
     door = [atoms.info.get("door", "open") for atoms in traj]
@@ -95,7 +96,7 @@ def plot_animation(traj: list[Atoms], model: str) -> tuple:
     )
     vmin, vmax = np.percentile(all_speeds, 5), np.percentile(all_speeds, 95)
 
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(figsize=(6, 8))
     ax.set_xlim(0, Lx)
     ax.set_ylim(0, Lz)
     ax.set_xlabel("x (Å)")
@@ -164,9 +165,15 @@ def plot_animation(traj: list[Atoms], model: str) -> tuple:
 
 
 if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("--data", type=str, default="data", required=False)
+    parser.add_argument("--plots", type=str, default="plots", required=False)
+    args = parser.parse_args()
+
     root = Path(__file__).parent
-    plots = root / "plots"
-    data = root / "data"
+    plots = root / args.plots
+    plots.mkdir(parents=True, exist_ok=True)
+    data = root / args.data
     models = sorted(p.stem for p in data.glob("*.xyz"))
 
     run_data: dict[str, list[Atoms]] = {

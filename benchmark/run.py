@@ -49,9 +49,7 @@ def main(
     model = OpenAIChatModel(
         model_name=model_name,
         provider=OpenAIProvider(base_url=f"http://{host}:{port}/v1"),
-        settings=OpenAIChatModelSettings(
-            openai_reasoning_effort="medium",
-        ),
+        settings=OpenAIChatModelSettings(thinking="medium"),
     )
 
     frames = []
@@ -67,6 +65,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--model", type=str)
     parser.add_argument("--name", type=str, default="", required=False)
+    parser.add_argument("--output", type=str, default="data", required=False)
     parser.add_argument("--system", type=str, default="json", required=False)
     parser.add_argument("--diff", type=int, default=1, required=False)
     parser.add_argument("--natoms", type=int, default=30, required=False)
@@ -81,7 +80,7 @@ if __name__ == "__main__":
     print("Running with arguments:", args)
 
     root = Path(__file__).parent
-    data = root / "data"
+    data = root / args.output
     data.mkdir(parents=True, exist_ok=True)
     name = args.name or args.model
     outpath = Path(data / name)

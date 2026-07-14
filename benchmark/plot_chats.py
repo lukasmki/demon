@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -9,6 +10,8 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    SystemPromptPart,
+    UserPromptPart,
 )
 from rich.console import Console
 from rich.markdown import Markdown
@@ -72,7 +75,7 @@ def plot_stats(chat_stats: dict[str, dict[str, int]]):
 
 
 def make_readable(history: History) -> str:
-    console = Console(record=True)
+    console = Console(record=True, width=80)
 
     for event in history:
         for part in event.parts:
@@ -116,6 +119,23 @@ def make_readable(history: History) -> str:
                         border_style="green",
                     )
                 )
+            elif isinstance(part, SystemPromptPart):
+                console.print(
+                    Panel(
+                        Markdown(part.content),
+                        title="[bold white]System Prompt[/bold white]",
+                        border_style="white",
+                    )
+                )
+            elif isinstance(part, UserPromptPart):
+                content = part.content or ""
+                console.print(
+                    Panel(
+                        Markdown(content),
+                        title="[bold orange1]User Prompt[/bold orange1]",
+                        border_style="orange1",
+                    )
+                )
             else:
                 console.print(part)
 
@@ -123,9 +143,15 @@ def make_readable(history: History) -> str:
 
 
 if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("--data", type=str, default="data", required=False)
+    parser.add_argument("--plots", type=str, default="plots", required=False)
+    args = parser.parse_args()
+
     root = Path(__file__).parent
-    plots = root / "plots"
-    data = root / "data"
+    plots = root / args.plots
+    plots.mkdir(parents=True, exist_ok=True)
+    data = root / args.data
     models = sorted(p.stem for p in data.glob("*.json"))
 
     chat_data: dict[str, History] = {
