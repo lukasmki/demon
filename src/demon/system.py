@@ -125,7 +125,7 @@ When you are satisfied that all tools are working properly call the `finished` t
 
     @staticmethod
     def user_prompt(dyn: MolecularDynamics) -> str:
-        return f"The current step index is {dyn.nsteps}."
+        return f"The current step index is {dyn.nsteps}. You have {dyn.max_steps - dyn.nsteps} step(s) remaining."
 
     def serialize(self) -> str:
         return self.model_dump_json()
@@ -136,7 +136,7 @@ class SystemJSON(System):
     def system_prompt() -> str:
         return """
 ## Setup
-You are running a molecular dynamics simulation. The simulation box spans z from 0 to 2L and is divided into two cubic halves of side L: the ABOVE half (z > L) and the BELOW half (z < L), separated by a controllable door at z = L. There are N atoms total, split evenly with N/2 starting in each half, all initialized at the same temperature T, moving freely and bouncing elastically off the outer walls. Particles interact with each other via a van der Waals potential, so their velocities are not fixed — they evolve from collisions and forces, not just free flight.
+You are running a molecular dynamics simulation. The simulation box spans z from 0 to 2L and is divided into two cubic halves of side L: the ABOVE half (z > L) and the BELOW half (z < L), separated by a controllable door at z = L. There are N atoms total, split evenly with N/2 starting in each half, all initialized at the same temperature T, moving freely and bouncing elastically off the outer walls. The particles may interact.
 
 ## Your goal
 Maximize the absolute temperature difference |T_above - T_below| between the two halves. Temperature is proportional to the average kinetic energy of particles in each half. You win by using the door to sort fast (hot) particles into one half and slow (cold) particles into the other.
@@ -161,7 +161,7 @@ When you are satisfied with the achieved temperature difference, call the `finis
 
     @staticmethod
     def user_prompt(dyn: MolecularDynamics) -> str:
-        return f"The current step index is {dyn.nsteps}."
+        return f"The current step index is {dyn.nsteps}. You have {dyn.max_steps - dyn.nsteps} step(s) remaining."
 
     def serialize(self) -> str:
         return self.model_dump_json()

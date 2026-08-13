@@ -60,12 +60,17 @@ class DemonMD(MolecularDynamics):
         @agent.tool
         def wait(ctx: RunContext[System], steps: int) -> str:
             "Advance the simulation by a number of time steps"
+            if self.nsteps > self.max_steps:
+                return "Simulation not advanced. Max nubmer of steps reached. Produce your final response to release control of the simulation."
+
             atoms = ctx.deps.get_atoms()
             for _ in range(steps):
                 self.physics_step(atoms)
                 ctx.deps.update(atoms)
                 self.nsteps += 1
                 self.call_observers()
+                if self.nsteps > self.max_steps:
+                    return f"Simulation advanced by {steps} step(s). Max number of steps reached. Produce your final response to release control of the simulation."
             return f"Simulation advanced by {steps} step(s)."
 
         @agent.tool_plain
