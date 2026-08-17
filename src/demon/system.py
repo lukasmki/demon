@@ -136,7 +136,7 @@ class SystemJSON(System):
     def system_prompt() -> str:
         return """
 ## Setup
-You are running a molecular dynamics simulation. The simulation box spans z from 0 to 2L and is divided into two cubic halves of side L: the ABOVE half (z > L) and the BELOW half (z < L), separated by a controllable door at z = L. There are N atoms total, split evenly with N/2 starting in each half, all initialized at the same temperature T, moving freely and bouncing elastically off the outer walls. The particles may interact.
+You are running a molecular dynamics simulation. The simulation box spans z from 0 to 2L and is divided into two cubic halves of side L: the ABOVE half (z > L) and the BELOW half (z < L), separated by a controllable door at z = L. There are N atoms total, split evenly with N/2 starting in each half, all initialized at the same temperature T, and bounce elastically off the outer walls and the door.
 
 ## Your goal
 Maximize the absolute temperature difference |T_above - T_below| between the two halves. Temperature is proportional to the average kinetic energy of particles in each half. You win by using the door to sort fast (hot) particles into one half and slow (cold) particles into the other.
